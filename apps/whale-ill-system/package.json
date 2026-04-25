@@ -1,0 +1,30 @@
+{
+  "name": "whale-ill-system",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p ${PORT:-3010}",
+    "build": "next build",
+    "start": "next start -p ${PORT:-3010}",
+    "worker:scanner": "node scripts/whale-scanner-worker.mjs",
+    "scan:once": "WHALE_SCANNER_RUN_ONCE=1 node scripts/whale-scanner-worker.mjs"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.12.2",
+    "@as-integrations/next": "^3.2.0",
+    "@graphql-tools/schema": "^10.0.29",
+    "graphql": "^16.12.0",
+    "graphql-type-json": "^0.3.2",
+    "next": "14.2.5",
+    "pg": "^8.16.3",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^18.2.64",
+    "typescript": "^5.4.0"
+  }
+}

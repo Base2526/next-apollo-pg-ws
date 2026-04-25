@@ -34,6 +34,61 @@ services:
       - ./packages:/app/packages
       - ./storage:/app/storage
 
+  whale-ill-system:
+    command: >
+      sh -c "npm ci &&
+             npm run dev"
+    environment:
+      NODE_ENV: development
+      WHALE_ILL_APP_NAME: ${WHALE_ILL_APP_NAME}
+      WHALE_ILL_GRAPHQL_PATH: ${WHALE_ILL_GRAPHQL_PATH}
+      PORT: ${WHALE_ILL_PORT:-3010}
+      NEXT_PUBLIC_BASE_URL: ${WHALE_ILL_NEXT_PUBLIC_BASE_URL}
+      NEXT_PUBLIC_GRAPHQL_HTTP: ${WHALE_ILL_NEXT_PUBLIC_GRAPHQL_HTTP}
+      NEXT_PUBLIC_GRAPHQL_WS: ${WHALE_ILL_NEXT_PUBLIC_GRAPHQL_WS}
+      WHALE_DB_HOST: ${WHALE_DB_HOST}
+      WHALE_DB_PORT: ${WHALE_DB_PORT}
+      WHALE_DB_NAME: ${WHALE_DB_NAME}
+      WHALE_DB_USER: ${WHALE_DB_USER}
+      WHALE_DB_PASSWORD: ${WHALE_DB_PASSWORD}
+      WHALE_ADMIN_TOKEN: ${WHALE_ADMIN_TOKEN}
+      ALLOW_DEMO_DATA: ${ALLOW_DEMO_DATA}
+      WHALE_ALCHEMY_API_KEY: ${WHALE_ALCHEMY_API_KEY}
+      WHALE_COVALENT_API_KEY: ${WHALE_COVALENT_API_KEY}
+      WHALE_DUNE_API_KEY: ${WHALE_DUNE_API_KEY}
+      WHALE_ARKHAM_API_KEY: ${WHALE_ARKHAM_API_KEY}
+      WHALE_SCANNER_INTERVAL_MINUTES: ${WHALE_SCANNER_INTERVAL_MINUTES}
+      WHALE_SMART_MONEY_MIN_SCORE: ${WHALE_SMART_MONEY_MIN_SCORE}
+      WHALE_MIN_LIQUIDITY_USD: ${WHALE_MIN_LIQUIDITY_USD}
+      WHALE_MIN_VOLUME_24H_USD: ${WHALE_MIN_VOLUME_24H_USD}
+      WHALE_SCANNER_SYNC_URL: ${WHALE_SCANNER_SYNC_URL}
+      WHALE_SCANNER_API_URL: ${WHALE_SCANNER_API_URL}
+      WHALE_EXCHANGE_WALLETS_JSON: ${WHALE_EXCHANGE_WALLETS_JSON}
+      WHALE_LONG_ALERT_SCORE_MIN: ${WHALE_LONG_ALERT_SCORE_MIN}
+      WHALE_ALERT_COOLDOWN_MINUTES: ${WHALE_ALERT_COOLDOWN_MINUTES}
+      WHALE_LINE_CHANNEL_ACCESS_TOKEN: ${WHALE_LINE_CHANNEL_ACCESS_TOKEN}
+      WHALE_LINE_USER_ID: ${WHALE_LINE_USER_ID}
+      WHALE_LINE_NOTIFY_TOKEN: ${WHALE_LINE_NOTIFY_TOKEN}
+      REDIS_URL: ${REDIS_URL}
+    ports:
+      - "${WHALE_ILL_PORT:-3010}:${WHALE_ILL_PORT:-3010}"
+    volumes:
+      - ./apps/whale-ill-system:/app/apps/whale-ill-system
+
+  whale-scanner-worker:
+    image: node:20-alpine
+    working_dir: /app/apps/whale-ill-system
+    command: sh -c "npm ci && npm run worker:scanner"
+    environment:
+      NODE_ENV: development
+      WHALE_ADMIN_TOKEN: ${WHALE_ADMIN_TOKEN}
+      WHALE_SCANNER_API_URL: ${WHALE_SCANNER_API_URL:-http://whale-ill-system:3010/api/whale/scan}
+      WHALE_SCANNER_INTERVAL_MINUTES: ${WHALE_SCANNER_INTERVAL_MINUTES}
+    depends_on:
+      - whale-ill-system
+    volumes:
+      - ./apps/whale-ill-system:/app/apps/whale-ill-system
+
   caddy:
     ports:
       - "443:443"

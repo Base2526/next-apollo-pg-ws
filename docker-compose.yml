@@ -10,6 +10,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./db/init-whale.sql:/docker-entrypoint-initdb.d/init-whale.sql:ro
 
   pgadmin:
     image: dpage/pgadmin4:8.14
@@ -61,6 +62,52 @@ services:
       NEXT_PUBLIC_SUPPORT_URL: ${NEXT_PUBLIC_SUPPORT_URL}
       NEXT_PUBLIC_WEB_NAME: ${WEB_NAME}
     depends_on:
+      - postgres
+      - redis
+      - ws
+
+  whale-ill-system:
+    image: node:20-alpine
+    container_name: whale-ill-system
+    working_dir: /app/apps/whale-ill-system
+    environment:
+      WHALE_ILL_APP_NAME: ${WHALE_ILL_APP_NAME}
+      WHALE_ILL_GRAPHQL_PATH: ${WHALE_ILL_GRAPHQL_PATH}
+      WHALE_DB_HOST: ${WHALE_DB_HOST}
+      WHALE_DB_PORT: ${WHALE_DB_PORT}
+      WHALE_DB_NAME: ${WHALE_DB_NAME}
+      WHALE_DB_USER: ${WHALE_DB_USER}
+      WHALE_DB_PASSWORD: ${WHALE_DB_PASSWORD}
+      WHALE_ADMIN_TOKEN: ${WHALE_ADMIN_TOKEN}
+      ALLOW_DEMO_DATA: ${ALLOW_DEMO_DATA}
+      WHALE_ALCHEMY_API_KEY: ${WHALE_ALCHEMY_API_KEY}
+      WHALE_COVALENT_API_KEY: ${WHALE_COVALENT_API_KEY}
+      WHALE_DUNE_API_KEY: ${WHALE_DUNE_API_KEY}
+      WHALE_ARKHAM_API_KEY: ${WHALE_ARKHAM_API_KEY}
+      WHALE_SCANNER_INTERVAL_MINUTES: ${WHALE_SCANNER_INTERVAL_MINUTES}
+      WHALE_SMART_MONEY_MIN_SCORE: ${WHALE_SMART_MONEY_MIN_SCORE}
+      WHALE_MIN_LIQUIDITY_USD: ${WHALE_MIN_LIQUIDITY_USD}
+      WHALE_MIN_VOLUME_24H_USD: ${WHALE_MIN_VOLUME_24H_USD}
+      WHALE_SCANNER_SYNC_URL: ${WHALE_SCANNER_SYNC_URL}
+      WHALE_SCANNER_API_URL: ${WHALE_SCANNER_API_URL}
+      WHALE_EXCHANGE_WALLETS_JSON: ${WHALE_EXCHANGE_WALLETS_JSON}
+      WHALE_LONG_ALERT_SCORE_MIN: ${WHALE_LONG_ALERT_SCORE_MIN}
+      WHALE_ALERT_COOLDOWN_MINUTES: ${WHALE_ALERT_COOLDOWN_MINUTES}
+      WHALE_LINE_CHANNEL_ACCESS_TOKEN: ${WHALE_LINE_CHANNEL_ACCESS_TOKEN}
+      WHALE_LINE_USER_ID: ${WHALE_LINE_USER_ID}
+      WHALE_LINE_NOTIFY_TOKEN: ${WHALE_LINE_NOTIFY_TOKEN}
+
+  whale-scanner-worker:
+    image: node:20-alpine
+    working_dir: /app/apps/whale-ill-system
+    command: sh -c "npm ci && npm run worker:scanner"
+    environment:
+      NODE_ENV: development
+      WHALE_ADMIN_TOKEN: ${WHALE_ADMIN_TOKEN}
+      WHALE_SCANNER_API_URL: ${WHALE_SCANNER_API_URL:-http://whale-ill-system:3010/api/whale/scan}
+      WHALE_SCANNER_INTERVAL_MINUTES: ${WHALE_SCANNER_INTERVAL_MINUTES}
+    depends_on:
+      - whale-ill-system
       - postgres
       - redis
       - ws
