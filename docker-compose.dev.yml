@@ -49,3 +49,27 @@ services:
     volumes:
       - .:/app
       - /app/apps/web/node_modules
+
+  lotto-web:
+    container_name: lotto-web-dev
+    build:
+      context: ./apps/lotto
+      dockerfile: Dockerfile
+    command: sh -c "npm install && npm run dev"
+    working_dir: /app/apps/lotto
+    env_file:
+      - .env.dev
+    environment:
+      DATABASE_URL: ${LOTTO_DATABASE_URL}
+      NEXT_PUBLIC_LOTTO_GRAPHQL_HTTP: ${LOTTO_GRAPHQL_HTTP}
+      NEXT_PUBLIC_LOTTO_GRAPHQL_WS: ${LOTTO_GRAPHQL_WS}
+      PORT: ${LOTTO_WEB_PORT}
+    ports:
+      - "${LOTTO_WEB_PORT}:3002"
+    volumes:
+      - ./apps/lotto:/app/apps/lotto
+      - /app/node_modules
+    depends_on:
+      - web
+      - ws
+      - postgres

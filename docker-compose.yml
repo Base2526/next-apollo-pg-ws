@@ -10,6 +10,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./db/init_lotto.sql:/docker-entrypoint-initdb.d/init_lotto.sql:ro
 
   pgadmin:
     image: dpage/pgadmin4:8.14
@@ -19,6 +20,8 @@ services:
     ports:
       - "5050:80"
     depends_on:
+      - web
+      - ws
       - postgres
 
   redis:
@@ -103,6 +106,22 @@ services:
     depends_on:
       - postgres
       - redis
+
+  lotto-web:
+    image: node:20-bookworm-slim
+    container_name: lotto-web
+    working_dir: /app/apps/lotto
+    environment:
+      DATABASE_URL: ${LOTTO_DATABASE_URL}
+      NEXT_PUBLIC_LOTTO_GRAPHQL_HTTP: ${LOTTO_GRAPHQL_HTTP}
+      NEXT_PUBLIC_LOTTO_GRAPHQL_WS: ${LOTTO_GRAPHQL_WS}
+      PORT: ${LOTTO_WEB_PORT}
+    ports:
+      - "${LOTTO_WEB_PORT}:3002"
+    volumes:
+      - ./apps/lotto:/app/apps/lotto
+    depends_on:
+      - postgres
 
 volumes:
   pgdata:

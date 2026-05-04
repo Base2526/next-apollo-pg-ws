@@ -143,3 +143,24 @@ services:
       - postgres
       - redis
     restart: unless-stopped
+
+  lotto-web:
+    build:
+      context: .
+      dockerfile: ./apps/lotto/Dockerfile
+    image: myapp-lotto-web:latest
+    container_name: lotto-web
+    working_dir: /app/apps/lotto
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: ${LOTTO_DATABASE_URL}
+      NEXT_PUBLIC_LOTTO_GRAPHQL_HTTP: ${LOTTO_GRAPHQL_HTTP}
+      NEXT_PUBLIC_LOTTO_GRAPHQL_WS: ${LOTTO_GRAPHQL_WS}
+      PORT: ${LOTTO_WEB_PORT}
+    ports:
+      - "${LOTTO_WEB_PORT}:3002"
+    volumes:
+      - ./apps/lotto:/app/apps/lotto
+    depends_on:
+      - postgres
