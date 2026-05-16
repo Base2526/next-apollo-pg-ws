@@ -28,10 +28,17 @@ const ADMIN_DASHBOARD = gql`
         id
         orderNo
         userPhone
+        categoryCode
         categoryName
+        drawCode
+        drawNameTh
+        drawDate
+        roundNo
         totalAmount
+        status
         resultStatus
         createdAt
+        closeAt
       }
       recentLogs {
         id

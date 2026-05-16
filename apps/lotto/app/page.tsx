@@ -18,28 +18,41 @@ dayjs.extend(timezone);
 dayjs.extend(isSameOrAfter);
 dayjs.locale("th");
 
-// Thai Government Lottery utilities
-const calculateThaiGovDrawDate = () => {
-  const now = dayjs().tz("Asia/Bangkok");
-  const day = now.date();
+// Universal date parser - handles ISO strings, epoch ms, and Date objects
+const parseDateMs = (value: any): number | null => {
+  if (!value) return null;
   
-  let drawDate;
+  // If already a number (epoch milliseconds)
+  if (typeof value === 'number') return value;
   
-  if (day <= 1) {
-    // Before or on 1st, next draw is 1st of this month
-    drawDate = now.date(1);
-  } else if (day <= 16) {
-    // After 1st but before or on 16th, next draw is 16th of this month
-    drawDate = now.date(16);
-  } else {
-    // After 16th, next draw is 1st of next month
-    drawDate = now.add(1, "month").date(1);
+  // If Date object
+  if (value instanceof Date) return value.getTime();
+  
+  const raw = String(value).trim();
+  if (!raw || raw === 'null' || raw === 'undefined') return null;
+  
+  // Handle epoch milliseconds string (e.g., "1778889600000" or "1778889600")
+  if (/^\d{10,13}$/.test(raw)) {
+    const ms = raw.length === 10 ? Number(raw) * 1000 : Number(raw);
+    return isNaN(ms) ? null : ms;
   }
   
-  // Set close time to 15:30
-  return drawDate.hour(15).minute(30).second(0).millisecond(0);
+  // Try parsing as ISO datetime or other Date format
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d.getTime();
 };
 
+// Format time in Thai timezone
+const formatTimeTH = (ms: number | null): string => {
+  if (!ms) return '-';
+  try {
+    return dayjs(ms).tz('Asia/Bangkok').format('HH:mm');
+  } catch {
+    return '-';
+  }
+};
+
+// Time calculation utilities
 const calculateTimeRemaining = (closeTime: dayjs.Dayjs) => {
   const now = dayjs().tz("Asia/Bangkok");
   const diff = closeTime.diff(now);
@@ -97,25 +110,137 @@ const getCurrentYeeKeeRound = (rounds: any[]) => {
 // Thai Government Lottery Card Component
 function ThaiGovLotteryCard({ category, onClick }: any) {
   const [timeRemaining, setTimeRemaining] = useState({ hours: 0, minutes: 0, seconds: 0, expired: false });
-  const [closeTime, setCloseTime] = useState<dayjs.Dayjs | null>(null);
+  
+  // Use actual draw from database instead of calculating
+  const { data: drawData, loading } = useActiveDraw('THAI_GOVERNMENT');
+  const activeDraw = drawData?.activeDraw;
   
   useEffect(() => {
-    const drawCloseTime = calculateThaiGovDrawDate();
-    setCloseTime(drawCloseTime);
+    if (!activeDraw?.close_at) return;
     
     const updateTimer = () => {
-      const remaining = calculateTimeRemaining(drawCloseTime);
-      setTimeRemaining(remaining);
+      try {
+        const closeMs = parseDateMs(activeDraw.close_at);
+        if (!closeMs) {
+          console.error('[ThaiGovCard] Invalid close_at:', activeDraw.close_at);
+          setTimeRemaining({ hours: 0, minutes: 0, seconds: 0, expired: true });
+          return;
+        }
+        
+        const nowMs = Date.now();
+        const remainingMs = Math.max(0, closeMs - nowMs);
+        
+        if (remainingMs <= 0) {
+          setTimeRemaining({ hours: 0, minutes: 0, seconds: 0, expired: true });
+          return;
+        }
+        
+        const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+        const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((remainingMs % (1000 * 60)) / 1000);
+        
+        setTimeRemaining({ hours, minutes, seconds, expired: false });
+      } catch (error) {
+        console.error('[ThaiGovCard] Timer error:', error);
+        setTimeRemaining({ hours: 0, minutes: 0, seconds: 0, expired: true });
+      }
     };
     
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
     
     return () => clearInterval(interval);
-  }, []);
+  }, [activeDraw?.close_at]);
   
-  const isOpen = !timeRemaining.expired;
-  const isUrgent = timeRemaining.hours < 1 && !timeRemaining.expired;
+  const isOpen = activeDraw?.is_accepting_bets === true;
+  const isUrgent = !timeRemaining.expired && timeRemaining.hours < 1;
+  
+  // Parse times using helper function
+  const closeMs = parseDateMs(activeDraw?.close_at);
+  const openMs = parseDateMs(activeDraw?.open_at);
+  const nowMs = Date.now();
+  
+  // Format for display
+  const closeTimeTH = formatTimeTH(closeMs);
+  const drawDate = activeDraw?.draw_date ? dayjs(activeDraw.draw_date).tz("Asia/Bangkok") : null;
+  
+  // COMPREHENSIVE DEBUG LOGGING
+  console.log("[HOME_THAI_TIME_DEBUG]", {
+    drawId: activeDraw?.id,
+    code: activeDraw?.code,
+    closeAtRaw: activeDraw?.close_at,
+    closeMs,
+    closeISO: closeMs ? new Date(closeMs).toISOString() : null,
+    closeTH: closeTimeTH,
+    nowMs,
+    remainingMs: closeMs ? Math.max(0, closeMs - nowMs) : 0,
+    timeRemaining,
+    isOpen,
+    isAcceptingBets: activeDraw?.is_accepting_bets,
+  });
+  
+  console.log("[THAI_ACTIVE_DRAW_DEBUG]", {
+    page: "homepage",
+    now: new Date().toISOString(),
+    selectedDraw: {
+      id: activeDraw?.id,
+      code: activeDraw?.code,
+      drawDate: activeDraw?.draw_date,
+      openAt: activeDraw?.open_at,
+      closeAt: activeDraw?.close_at,
+      status: activeDraw?.status,
+      resultStatus: activeDraw?.result_status,
+      isActive: activeDraw?.is_active,
+      isAcceptingBets: activeDraw?.is_accepting_bets,
+    },
+    parsed: {
+      openMs,
+      closeMs,
+      nowMs,
+      isOpenTime: openMs ? nowMs >= openMs : false,
+      isBeforeClose: closeMs ? nowMs < closeMs : false,
+      isStatusOpen: ['OPEN', 'PENDING'].includes(activeDraw?.status || ''),
+      isAcceptingBets: activeDraw?.is_accepting_bets === true,
+    },
+    formatted: {
+      now: dayjs().tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss'),
+      openAt: openMs ? dayjs(openMs).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss') : null,
+      closeAt: closeMs ? dayjs(closeMs).tz('Asia/Bangkok').format('YYYY-MM-DD HH:mm:ss') : null,
+    }
+  });
+  
+  // DEBUG: Compare with play page
+  console.log("[ACTIVE_DRAW_COMPARE_DEBUG]", {
+    page: "homepage",
+    categoryCode: 'THAI_GOVERNMENT',
+    selectedDrawId: activeDraw?.id,
+    code: activeDraw?.code,
+    drawDate: activeDraw?.draw_date,
+    nameTh: activeDraw?.name_th,
+    openAt: activeDraw?.open_at,
+    closeAt: activeDraw?.close_at,
+    status: activeDraw?.status,
+    isActive: activeDraw?.is_active,
+    isAcceptingBets: activeDraw?.is_accepting_bets,
+    now: new Date().toISOString(),
+  });
+  
+  if (loading) {
+    return (
+      <button
+        className="category-card"
+        style={{
+          borderColor: category.color || '#dc2626',
+          position: 'relative',
+          cursor: 'wait',
+        }}
+      >
+        <div style={{ padding: 20, textAlign: 'center', color: '#999' }}>
+          กำลังโหลด...
+        </div>
+      </button>
+    );
+  }
   
   return (
     <button
@@ -161,7 +286,7 @@ function ThaiGovLotteryCard({ category, onClick }: any) {
       </h2>
       
       {/* Draw Date */}
-      {closeTime && (
+      {activeDraw && (
         <div style={{ 
           fontSize: 14, 
           color: '#666', 
@@ -169,15 +294,23 @@ function ThaiGovLotteryCard({ category, onClick }: any) {
           fontWeight: 500
         }}>
           <div style={{ marginBottom: 4 }}>
-            งวดวันที่: <span style={{ fontWeight: 600, color: '#000' }}>
-              {closeTime.format('D MMM YYYY')}
-            </span>
+            {activeDraw.name_th || `งวดวันที่: ${drawDate?.format('D MMM YYYY') || '-'}`}
           </div>
           <div>
             ปิดรับ: <span style={{ fontWeight: 600, color: '#000' }}>
-              {closeTime.format('HH:mm')} น.
+              {closeTimeTH} น.
             </span>
           </div>
+        </div>
+      )}
+      {!activeDraw && (
+        <div style={{ 
+          fontSize: 14, 
+          color: '#999', 
+          marginTop: 8,
+          fontWeight: 500
+        }}>
+          ยังไม่มีงวดที่เปิดรับแทง
         </div>
       )}
       

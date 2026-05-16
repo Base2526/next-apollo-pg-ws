@@ -182,6 +182,7 @@ export const typeDefs = gql`
     status: String
     createdAt: String!
     checkedAt: String
+    closeAt: String
     items: [AdminSlipItem!]!
   }
 
@@ -247,10 +248,17 @@ export const typeDefs = gql`
     id: ID!
     orderNo: String!
     userPhone: String
+    categoryCode: String
     categoryName: String
+    drawCode: String
+    drawNameTh: String
+    drawDate: String
+    roundNo: Int
     totalAmount: Float!
+    status: String!
     resultStatus: String!
     createdAt: String!
+    closeAt: String
   }
 
   type AdminDashboard {
@@ -262,6 +270,23 @@ export const typeDefs = gql`
     usersGrowth: [DashboardUsersGrowth!]!
     recentSlips: [DashboardRecentSlip!]!
     recentLogs: [AdminLog!]!
+  }
+
+  type RefundResult {
+    orderId: Int!
+    orderCode: String!
+    userId: String!
+    amount: Float!
+    success: Boolean!
+    error: String
+  }
+
+  type RefundSummary {
+    totalProcessed: Int!
+    totalRefunded: Int!
+    totalAmount: Float!
+    results: [RefundResult!]!
+    errors: [String!]!
   }
 
   type Query {
@@ -512,6 +537,8 @@ export const typeDefs = gql`
     login(phone: String!, password: String!): LoginPayload!
     forgotPassword(phone: String!): ForgotPasswordPayload!
     approveSlip(orderId: ID!): AdminSlip!
+    refundOrder(orderId: ID!, reason: String!): AdminSlip!
+    refundExpiredPendingOrders: RefundSummary!
     
     # Credit System
     createDeposit(input: CreateDepositInput!): Deposit!

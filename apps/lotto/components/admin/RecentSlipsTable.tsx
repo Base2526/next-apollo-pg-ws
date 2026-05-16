@@ -1,9 +1,9 @@
 import React from "react";
 import { Card, Table, Tag, Empty, Button, Modal, message } from "antd";
-import { FileTextOutlined, CheckOutlined } from "@ant-design/icons";
+import { FileTextOutlined, CheckOutlined, RollbackOutlined } from "@ant-design/icons";
 import { useMutation } from "@apollo/client";
-import { APPROVE_SLIP } from "../../graphql/mutations";
-import { STATUS_LABELS, STATUS_COLORS, formatDate } from "../../lib/slipHelpers";
+import { APPROVE_SLIP, REFUND_ORDER } from "../../graphql/mutations";
+import { getSlipStatusLabel, getSlipStatusColor, formatDate, getSlipAdminAction } from "../../lib/slipHelpers";
 
 interface RecentSlipsTableProps {
   slips: any[];
@@ -20,6 +20,18 @@ export default function RecentSlipsTable({ slips, showActions = false, onRefetch
     onError: (err) => {
       message.error(err.message || 'เกิดข้อผิดพลาดในการรับโพย');
     },
+    refetchQueries: ['AdminDashboard', 'LottoDraw', 'AdminDraws'],
+  });
+
+  const [refundOrder, { loading: refunding }] = useMutation(REFUND_ORDER, {
+    onCompleted: () => {
+      message.success('คืนเงินสำเร็จแล้ว');
+      if (onRefetch) onRefetch();
+    },
+    onError: (err) => {
+      message.error(err.message || 'เกิดข้อผิดพลาดในการคืนเงิน');
+    },
+    refetchQueries: ['AdminDashboard', 'LottoDraw', 'AdminDraws'],
   });
 
   const handleApproveSlip = (orderId: string, orderNo: string) => {
@@ -31,6 +43,24 @@ export default function RecentSlipsTable({ slips, showActions = false, onRefetch
       okButtonProps: { loading: approving },
       onOk: async () => {
         await approveSlip({ variables: { orderId } });
+      },
+    });
+  };
+
+  const handleRefundOrder = (orderId: string, orderNo: string) => {
+    Modal.confirm({
+      title: 'ยืนยันการคืนเงิน',
+      content: `ต้องการคืนเงินให้โพยเลขที่ ${orderNo} ใช่หรือไม่?`,
+      okText: 'ยืนยันคืนเงิน',
+      cancelText: 'ยกเลิก',
+      okButtonProps: { loading: refunding, danger: true },
+      onOk: async () => {
+        await refundOrder({ 
+          variables: { 
+            orderId,
+            reason: 'Admin คืนเงินด้วยตัวเอง (หมดเวลารับโพย)' 
+          } 
+        });
       },
     });
   };
@@ -60,6 +90,65 @@ export default function RecentSlipsTable({ slips, showActions = false, onRefetch
       render: (name: string) => name || '-',
     },
     {
+      title: 'งวด / รอบ',
+      key: 'drawInfo',
+      width: 150,
+      render: (_: any, record: any) => {
+        // Priority: Use drawNameTh if available
+        if (record.drawNameTh) {
+          return <span style={{ fontSize: 12 }}>{record.drawNameTh}</span>;
+        }
+
+        // Fallback based on category
+        if (record.categoryCode === 'YEEKEE_VIP' && record.roundNo) {
+          return <span style={{ fontSize: 12 }}>รอบที่ {record.roundNo}</span>;
+        }
+
+        if (record.categoryCode === 'THAI_GOVERNMENT' && record.drawDate) {
+          // Format date - handle epoch ms, ISO, or YYYY-MM-DD
+          const formatDrawDate = (value: any) => {
+            if (!value) return '-';
+            
+            const raw = String(value).trim();
+            
+            // Handle epoch milliseconds (10-13 digits)
+            if (/^\d{10,13}$/.test(raw)) {
+              const ms = raw.length === 10 ? Number(raw) * 1000 : Number(raw);
+              const d = new Date(ms);
+              if (!isNaN(d.getTime())) {
+                return d.toLocaleDateString('th-TH', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric',
+                });
+              }
+            }
+            
+            // Handle ISO or YYYY-MM-DD
+            const d = new Date(raw);
+            if (!isNaN(d.getTime())) {
+              return d.toLocaleDateString('th-TH', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+              });
+            }
+            
+            return '-';
+          };
+
+          return <span style={{ fontSize: 12 }}>งวดวันที่ {formatDrawDate(record.drawDate)}</span>;
+        }
+
+        // Show draw code if available
+        if (record.drawCode) {
+          return <span style={{ fontSize: 12, color: '#6b7280' }}>{record.drawCode}</span>;
+        }
+
+        return '-';
+      },
+    },
+    {
       title: 'ยอดรวม',
       dataIndex: 'totalAmount',
       key: 'totalAmount',
@@ -71,13 +160,16 @@ export default function RecentSlipsTable({ slips, showActions = false, onRefetch
     },
     {
       title: 'สถานะ',
-      dataIndex: 'resultStatus',
-      key: 'resultStatus',
-      render: (status: string) => (
-        <Tag color={STATUS_COLORS[status] || 'default'}>
-          {STATUS_LABELS[status] || status}
-        </Tag>
-      ),
+      key: 'status',
+      render: (_: any, record: any) => {
+        const label = getSlipStatusLabel(record.status || 'pending', record.resultStatus);
+        const color = getSlipStatusColor(record.status || 'pending', record.resultStatus);
+        return (
+          <Tag color={color}>
+            {label}
+          </Tag>
+        );
+      },
     },
     {
       title: 'วันที่สร้าง',
@@ -92,9 +184,12 @@ export default function RecentSlipsTable({ slips, showActions = false, onRefetch
     columns.push({
       title: 'การจัดการ',
       key: 'actions',
-      width: 100,
+      width: 150,
       render: (_: any, record: any) => {
-        if (record.resultStatus === 'pending') {
+        const actionInfo = getSlipAdminAction(record.status, record.resultStatus, record.closeAt);
+
+        // Show approve button
+        if (actionInfo.type === 'APPROVE') {
           return (
             <Button
               type="primary"
@@ -103,11 +198,33 @@ export default function RecentSlipsTable({ slips, showActions = false, onRefetch
               onClick={() => handleApproveSlip(record.id, record.orderNo)}
               loading={approving}
             >
-              รับโพย
+              {actionInfo.label}
             </Button>
           );
         }
-        return <span style={{ color: '#999' }}>-</span>;
+
+        // Show refund button
+        if (actionInfo.type === 'REFUND') {
+          return (
+            <Button
+              danger
+              icon={<RollbackOutlined />}
+              size="small"
+              onClick={() => handleRefundOrder(record.id, record.orderNo)}
+              loading={refunding}
+            >
+              {actionInfo.label}
+            </Button>
+          );
+        }
+
+        // Show status tag
+        if (actionInfo.type === 'APPROVED' || actionInfo.type === 'REFUNDED' || actionInfo.type === 'REJECTED') {
+          return <Tag color={actionInfo.color}>{actionInfo.label}</Tag>;
+        }
+
+        // Default: show "-"
+        return <span style={{ color: '#999' }}>{actionInfo.label}</span>;
       },
     } as any);
   }

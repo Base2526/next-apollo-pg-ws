@@ -6,10 +6,30 @@ import { startServerAndCreateNextHandler } from "@as-integrations/next";
 import { NextRequest } from "next/server";
 import { typeDefs } from "../../../graphql/typeDefs";
 import { resolvers } from "../../../graphql/resolvers";
+import { lottoEnhancementsTypeDefs } from "../../../graphql/typeDefs.enhancements";
+import { 
+  lottoEnhancementQueries, 
+  lottoEnhancementMutations 
+} from "../../../graphql/resolvers.enhancements";
 
 export const runtime = "nodejs";
 
-const schema = makeExecutableSchema({ typeDefs, resolvers });
+// Merge typeDefs
+const mergedTypeDefs = [typeDefs, lottoEnhancementsTypeDefs];
+
+// Merge resolvers
+const mergedResolvers = {
+  Query: {
+    ...resolvers.Query,
+    ...lottoEnhancementQueries
+  },
+  Mutation: {
+    ...resolvers.Mutation,
+    ...lottoEnhancementMutations
+  }
+};
+
+const schema = makeExecutableSchema({ typeDefs: mergedTypeDefs, resolvers: mergedResolvers });
 const server = new ApolloServer({
   schema,
   introspection: process.env.NODE_ENV !== "production",

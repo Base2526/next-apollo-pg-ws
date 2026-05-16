@@ -15,6 +15,7 @@ function requireAdmin(context: any) {
   if (!token) throw new Error('Unauthorized');
   const decoded = require('jsonwebtoken').verify(token, process.env.LOTTO_JWT_SECRET || 'changeme');
   if (!decoded || decoded.role !== 'admin') throw new Error('Unauthorized');
+  return decoded; // Return decoded token with user info
 }
 
 // =============================
@@ -30,6 +31,11 @@ const lottoQuery = {
   async activeDraw(_parent: any, args: { categoryCode: string }) {
     const { categoryCode } = args;
     
+    console.log('[ACTIVE_DRAW_RESOLVER]', {
+      categoryCode,
+      now: new Date().toISOString(),
+    });
+    
     // Get category ID
     const categoryRows = await queryLottoDb(
       `SELECT id FROM lotto_categories WHERE code = $1 AND is_active = true`,
@@ -37,26 +43,42 @@ const lottoQuery = {
     );
     
     if (!categoryRows || categoryRows.length === 0) {
+      console.log('[ACTIVE_DRAW_RESOLVER] Category not found or inactive:', categoryCode);
       return null;
     }
     
     const categoryId = categoryRows[0].id;
     
-    // Find draw that is currently accepting bets
+    // STEP 1: Auto-update status for draws in valid betting windows
+    // This fixes the issue where draws are created as 'DRAFT' but should be 'OPEN'
+    await queryLottoDb(
+      `UPDATE lotto_draws
+       SET status = 'OPEN'
+       WHERE category_id = $1
+         AND is_active = true
+         AND status IN ('DRAFT', 'PENDING')
+         AND NOW() >= open_at
+         AND NOW() < close_at
+         AND status NOT IN ('CANCELLED', 'RESULTED', 'CLOSED')`,
+      [categoryId]
+    );
+    
+    // STEP 2: Find draw that is currently accepting bets
     // Requirements: 
     // 1. Category matches and is active
-    // 2. Draw is active
-    // 3. Status is not CANCELLED or RESULTED
-    // 4. Current time is within betting window (open_at <= now < close_at)
+    // 2. Draw is active (is_active = true)
+    // 3. Status is OPEN or PENDING (actively accepting bets)
+    // 4. Current time is within betting window (open_at <= NOW() < close_at)
+    // 5. Order by close_at ASC to get the earliest closing draw (current draw)
     const activeDraws = await queryLottoDb(
       `SELECT d.*, 
               lc.code as category_code,
-              (NOW() >= d.open_at AND NOW() < d.close_at AND d.is_active = true AND d.status NOT IN ('CANCELLED', 'RESULTED')) as is_accepting_bets
+              (NOW() >= d.open_at AND NOW() < d.close_at AND d.is_active = true AND d.status IN ('OPEN', 'PENDING')) as is_accepting_bets
        FROM lotto_draws d
        LEFT JOIN lotto_categories lc ON d.category_id = lc.id
        WHERE d.category_id = $1 
          AND d.is_active = true
-         AND d.status NOT IN ('CANCELLED', 'RESULTED')
+         AND d.status IN ('OPEN', 'PENDING')
          AND NOW() >= d.open_at
          AND NOW() < d.close_at
        ORDER BY d.close_at ASC
@@ -65,26 +87,61 @@ const lottoQuery = {
     );
     
     if (activeDraws && activeDraws.length > 0) {
-      return activeDraws[0];
+      const draw = activeDraws[0];
+      console.log('[ACTIVE_DRAW_RESOLVER] Found active draw:', {
+        id: draw.id,
+        code: draw.code,
+        categoryCode: draw.category_code,
+        drawDate: draw.draw_date,
+        openAt: draw.open_at,
+        closeAt: draw.close_at,
+        status: draw.status,
+        isActive: draw.is_active,
+        isAcceptingBets: draw.is_accepting_bets,
+      });
+      return draw;
     }
     
-    // If no draw currently accepting bets, return next future draw
-    const futureDraws = await queryLottoDb(
-      `SELECT d.*, 
-              lc.code as category_code,
-              (NOW() >= d.open_at AND NOW() < d.close_at AND d.is_active = true AND d.status NOT IN ('CANCELLED', 'RESULTED')) as is_accepting_bets
+    // STEP 3: Debug why no active draw was found
+    console.log('[ACTIVE_DRAW_RESOLVER] No active draw found, checking all draws for category:', categoryCode);
+    
+    const allDraws = await queryLottoDb(
+      `SELECT d.id, d.code, d.draw_date, d.name_th,
+              d.open_at, d.close_at, d.status, d.is_active,
+              NOW() as current_time,
+              NOW() >= d.open_at as is_open_time,
+              NOW() < d.close_at as is_before_close
        FROM lotto_draws d
-       LEFT JOIN lotto_categories lc ON d.category_id = lc.id
-       WHERE d.category_id = $1 
+       WHERE d.category_id = $1
          AND d.is_active = true
-         AND d.open_at > NOW()
-         AND d.open_at > NOW()
-       ORDER BY d.open_at ASC
-       LIMIT 1`,
+         AND d.draw_date >= CURRENT_DATE - INTERVAL '7 days'
+       ORDER BY d.draw_date ASC
+       LIMIT 5`,
       [categoryId]
     );
     
-    return futureDraws && futureDraws.length > 0 ? futureDraws[0] : null;
+    console.log('[ACTIVE_DRAW_RESOLVER] All recent draws:', allDraws.map(d => ({
+      id: d.id,
+      code: d.code,
+      drawDate: d.draw_date,
+      nameTh: d.name_th,
+      openAt: d.open_at,
+      closeAt: d.close_at,
+      status: d.status,
+      isActive: d.is_active,
+      currentTime: d.current_time,
+      isOpenTime: d.is_open_time,
+      isBeforeClose: d.is_before_close,
+      reason: !d.is_open_time ? 'NOT_YET_OPEN' : 
+              !d.is_before_close ? 'ALREADY_CLOSED' : 
+              !['OPEN', 'PENDING'].includes(d.status) ? `INVALID_STATUS(${d.status})` : 
+              'SHOULD_MATCH'
+    })));
+    
+    // DO NOT fallback to future draws!
+    // If no draw is currently accepting bets, return null
+    // Frontend should handle this by showing "ยังไม่มีงวดที่เปิดรับแทง" message
+    return null;
   },
   async drawById(_parent: any, args: { id: number }) {
     // Format timestamps as ISO strings like yeeKeeRounds does
@@ -554,7 +611,11 @@ const adminQuery = {
   // ==========================
   async adminSlips(_parent: any, { filter = {}, pagination = {} }: any, context: any) {
 
-    console.log("[adminSlips] Filter:", filter, "Pagination:", pagination);
+    console.log("[ADMIN_SLIPS_QUERY_DEBUG]", {
+      filter,
+      pagination,
+      timestamp: new Date().toISOString(),
+    });
     requireAdmin(context);
     
     const { categoryCode, dateFrom, dateTo, resultStatus, userPhone } = filter;
@@ -628,6 +689,7 @@ const adminQuery = {
         u.name as user_name,
         d.name_th as draw_name,
         d.draw_date,
+        d.close_at,
         c.name_th as category_name
       FROM lotto_orders o
       LEFT JOIN lotto_users u ON u.id = o.user_id
@@ -687,6 +749,7 @@ const adminQuery = {
       status: order.status,
       createdAt: order.created_at ? (order.created_at.toISOString ? order.created_at.toISOString() : order.created_at) : null,
       checkedAt: order.checked_at ? (order.checked_at.toISOString ? order.checked_at.toISOString() : order.checked_at) : null,
+      closeAt: order.close_at ? (order.close_at.toISOString ? order.close_at.toISOString() : order.close_at) : null,
       items: order.items,
     }));
     
@@ -760,14 +823,22 @@ const adminQuery = {
       `SELECT 
         o.id,
         o.order_no,
+        o.category_code,
         o.total_amount,
+        o.status,
         o.result_status,
         o.created_at,
         u.phone as user_phone,
-        c.name_th as category_name
+        c.name_th as category_name,
+        d.code as draw_code,
+        d.name_th as draw_name_th,
+        d.draw_date,
+        d.round_no,
+        d.close_at
        FROM lotto_orders o
        LEFT JOIN lotto_users u ON u.id = o.user_id
        LEFT JOIN lotto_categories c ON c.code = o.category_code
+       LEFT JOIN lotto_draws d ON d.id = o.draw_id
        ORDER BY o.created_at DESC
        LIMIT 10`
     );
@@ -775,10 +846,17 @@ const adminQuery = {
       id: row.id,
       orderNo: row.order_no || `#${row.id}`,
       userPhone: row.user_phone,
+      categoryCode: row.category_code,
       categoryName: row.category_name,
+      drawCode: row.draw_code,
+      drawNameTh: row.draw_name_th,
+      drawDate: row.draw_date,
+      roundNo: row.round_no ? parseInt(row.round_no, 10) : null,
       totalAmount: parseFloat(row.total_amount || 0),
+      status: row.status,
       resultStatus: row.result_status,
       createdAt: row.created_at ? (row.created_at.toISOString ? row.created_at.toISOString() : row.created_at) : null,
+      closeAt: row.close_at ? (row.close_at.toISOString ? row.close_at.toISOString() : row.close_at) : null,
     }));
     
     // 8. Recent Logs (last 10) - fallback if logs table doesn't exist
@@ -1412,9 +1490,9 @@ const mutation = {
     
     // Insert order with category_code and user_id
     const orderRows = await queryLottoDb(
-      `INSERT INTO lotto_orders (order_no, draw_id, total_amount, status, category_code, user_id) 
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [order_no, draw_id, total, 'pending', category_code || null, userId]
+      `INSERT INTO lotto_orders (order_no, draw_id, total_amount, status, result_status, category_code, user_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [order_no, draw_id, total, 'pending_confirm', 'pending', category_code || null, userId]
     );
     const order = orderRows[0];
     
@@ -1549,7 +1627,7 @@ const mutation = {
     
     // Check if order exists
     const existingOrders = await queryLottoDb(
-      `SELECT id, result_status FROM lotto_orders WHERE id = $1`,
+      `SELECT id, status, result_status FROM lotto_orders WHERE id = $1`,
       [orderIdInt]
     );
     
@@ -1560,20 +1638,41 @@ const mutation = {
     const order = existingOrders[0];
     
     // Check if already approved
-    if (order.result_status === 'approved') {
+    if (order.status === 'approved') {
       throw new Error("รายการนี้รับโพยแล้ว");
     }
     
-    // Check if cancelled or rejected
-    if (order.result_status === 'cancelled' || order.result_status === 'rejected') {
-      throw new Error("ไม่สามารถรับโพยที่ถูกยกเลิกหรือปฏิเสธแล้ว");
+    // Check if cancelled, rejected or refunded
+    if (order.status === 'cancelled' || order.status === 'rejected' || order.status === 'refunded') {
+      throw new Error(`ไม่สามารถรับโพยที่มีสถานะ ${order.status} แล้ว`);
+    }
+    
+    // Check if draw is still accepting bets
+    const drawRows = await queryLottoDb(
+      `SELECT d.id, d.close_at, d.code, d.name_th
+       FROM lotto_draws d
+       INNER JOIN lotto_orders o ON o.draw_id = d.id
+       WHERE o.id = $1`,
+      [orderIdInt]
+    );
+    
+    if (drawRows && drawRows.length > 0) {
+      const draw = drawRows[0];
+      const now = new Date();
+      const closeAt = new Date(draw.close_at);
+      
+      if (now > closeAt) {
+        throw new Error(`ไม่สามารถรับโพยได้ เนื่องจากงวด/รอบปิดรับแล้ว (ปิดรับ: ${draw.close_at}) กรุณาคืนเงินแทน`);
+      }
     }
     
     // Update to approved
     await queryLottoDb(
       `UPDATE lotto_orders 
-       SET result_status = 'approved', 
-           checked_at = NOW()
+       SET status = 'approved', 
+           approved_at = NOW(),
+           checked_at = NOW(),
+           updated_at = NOW()
        WHERE id = $1`,
       [orderIdInt]
     );
@@ -1590,6 +1689,7 @@ const mutation = {
         o.status,
         o.created_at,
         o.checked_at,
+        o.approved_at,
         o.draw_id,
         o.category_code,
         u.phone as user_phone,
@@ -1652,6 +1752,148 @@ const mutation = {
         possibleWin: parseFloat(item.possible_win || 0),
         generatedFrom: item.generated_from,
       })),
+    };
+  },
+
+  // =============================
+  // REFUND MUTATIONS
+  // =============================
+  async refundOrder(_parent: any, { orderId, reason }: { orderId: string; reason: string }, context: any) {
+    const admin = requireAdmin(context);
+    
+    const { refundOrder: refundOrderService } = await import('../services/refundService');
+    
+    const orderIdInt = parseInt(orderId, 10);
+    if (isNaN(orderIdInt)) {
+      throw new Error("Invalid order ID");
+    }
+
+    // Extract adminUserId from decoded token
+    // The requireAdmin returns decoded JWT with fields like: { userId, phone, role, ... }
+    const adminUserId = admin?.userId || null;
+    
+    console.log('[REFUND_ORDER_RESOLVER]', {
+      orderId: orderIdInt,
+      orderIdType: typeof orderIdInt,
+      reason,
+      reasonType: typeof reason,
+      adminUserId,
+      adminUserIdType: typeof adminUserId,
+      adminInfo: admin,
+    });
+    
+    if (!adminUserId) {
+      throw new Error('Admin user ID not found in token');
+    }
+    
+    // Call refund service
+    const result = await refundOrderService(orderIdInt, reason, adminUserId);
+    
+    if (!result.success) {
+      throw new Error(result.error || 'เกิดข้อผิดพลาดในการคืนเงิน');
+    }
+
+    // Fetch updated order details
+    const updatedOrders = await queryLottoDb(
+      `SELECT 
+        o.id,
+        o.order_no,
+        o.user_id,
+        o.total_amount,
+        o.total_win,
+        o.result_status,
+        o.status,
+        o.created_at,
+        o.checked_at,
+        o.approved_at,
+        o.refunded_at,
+        o.refund_reason,
+        o.draw_id,
+        o.category_code,
+        u.phone as user_phone,
+        u.name as user_name,
+        d.name_th as draw_name,
+        d.draw_date,
+        c.name_th as category_name
+      FROM lotto_orders o
+      LEFT JOIN lotto_users u ON u.id = o.user_id
+      LEFT JOIN lotto_draws d ON d.id = o.draw_id
+      LEFT JOIN lotto_categories c ON c.code = o.category_code
+      WHERE o.id = $1`,
+      [orderIdInt]
+    );
+    
+    const updatedOrder = updatedOrders[0];
+    
+    // Fetch items
+    const items = await queryLottoDb(
+      `SELECT 
+        i.id,
+        i.bet_type_code,
+        i.number,
+        i.price,
+        i.payout_rate,
+        i.possible_win,
+        i.generated_from,
+        bt.name_th as bet_type_name
+      FROM lotto_order_items i
+      LEFT JOIN lotto_bet_types bt ON bt.code = i.bet_type_code
+      WHERE i.order_id = $1
+      ORDER BY i.id`,
+      [orderIdInt]
+    );
+    
+    return {
+      id: updatedOrder.id,
+      orderNo: updatedOrder.order_no,
+      userId: updatedOrder.user_id,
+      userPhone: updatedOrder.user_phone,
+      userName: updatedOrder.user_name,
+      categoryCode: updatedOrder.category_code,
+      categoryName: updatedOrder.category_name,
+      drawId: updatedOrder.draw_id,
+      drawName: updatedOrder.draw_name,
+      drawDate: updatedOrder.draw_date ? (updatedOrder.draw_date.toISOString ? updatedOrder.draw_date.toISOString() : updatedOrder.draw_date) : null,
+      totalAmount: parseFloat(updatedOrder.total_amount || 0),
+      totalWin: parseFloat(updatedOrder.total_win || 0),
+      resultStatus: updatedOrder.result_status,
+      status: updatedOrder.status,
+      createdAt: updatedOrder.created_at ? (updatedOrder.created_at.toISOString ? updatedOrder.created_at.toISOString() : updatedOrder.created_at) : null,
+      checkedAt: updatedOrder.checked_at ? (updatedOrder.checked_at.toISOString ? updatedOrder.checked_at.toISOString() : updatedOrder.checked_at) : null,
+      items: items.map((item: any) => ({
+        id: item.id,
+        betTypeCode: item.bet_type_code,
+        betTypeName: item.bet_type_name,
+        number: item.number,
+        amount: parseFloat(item.price),
+        payoutRate: parseFloat(item.payout_rate),
+        possibleWin: parseFloat(item.possible_win || 0),
+        generatedFrom: item.generated_from,
+      })),
+    };
+  },
+
+  async refundExpiredPendingOrders(_parent: any, _args: any, context: any) {
+    requireAdmin(context);
+    
+    const { refundExpiredPendingOrders: refundExpiredService } = await import('../services/refundService');
+    
+    // Call refund service
+    const summary = await refundExpiredService();
+    
+    return {
+      totalProcessed: summary.totalProcessed,
+      totalRefunded: summary.totalRefunded,
+      totalAmount: summary.totalAmount,
+      results: summary.results.map(r => ({
+        orderId: r.orderId,
+        orderCode: r.orderCode,
+        userId: r.userId,
+        amount: r.amount,
+        success: r.success,
+        error: r.error || null,
+      })),
+      errors: summary.errors,
     };
   },
 

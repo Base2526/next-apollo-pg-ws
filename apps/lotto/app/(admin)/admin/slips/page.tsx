@@ -2,10 +2,10 @@
 import { useState } from "react";
 import { useQuery, gql, useMutation } from "@apollo/client";
 import { Card, Table, Select, DatePicker, Input, Button, Space, Tag, Typography, Alert, Descriptions, Modal, message } from "antd";
-import { SearchOutlined, ClearOutlined, ReloadOutlined, CheckOutlined } from "@ant-design/icons";
+import { SearchOutlined, ClearOutlined, ReloadOutlined, CheckOutlined, RollbackOutlined } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
-import { APPROVE_SLIP } from "../../../../graphql/mutations";
-import { STATUS_LABELS, STATUS_COLORS, formatDate } from "../../../../lib/slipHelpers";
+import { APPROVE_SLIP, REFUND_ORDER } from "../../../../graphql/mutations";
+import { STATUS_LABELS, STATUS_COLORS, formatDate, getSlipAdminAction } from "../../../../lib/slipHelpers";
 
 const { RangePicker } = DatePicker;
 const { Title } = Typography;
@@ -31,6 +31,7 @@ const GET_ADMIN_SLIPS = gql`
         status
         createdAt
         checkedAt
+        closeAt
         items {
           id
           betTypeCode
@@ -69,6 +70,15 @@ export default function AdminSlipsPage() {
 
   const { data, loading, error, refetch } = useQuery(GET_ADMIN_SLIPS, {
     variables: { filter, pagination },
+    onError: (err) => {
+      console.log("[ADMIN_SLIPS_QUERY_DEBUG]", {
+        queryVariables: { filter, pagination },
+        error: err.message,
+        networkError: err.networkError,
+        graphQLErrors: err.graphQLErrors,
+        timestamp: new Date().toISOString(),
+      });
+    },
   });
 
   const [approveSlip, { loading: approving }] = useMutation(APPROVE_SLIP, {
@@ -79,6 +89,18 @@ export default function AdminSlipsPage() {
     onError: (err) => {
       message.error(err.message || 'เกิดข้อผิดพลาดในการรับโพย');
     },
+    refetchQueries: ['AdminDashboard', 'LottoDraw', 'AdminDraws', 'AdminSlips'],
+  });
+
+  const [refundOrder, { loading: refunding }] = useMutation(REFUND_ORDER, {
+    onCompleted: () => {
+      message.success('คืนเงินสำเร็จแล้ว');
+      refetch();
+    },
+    onError: (err) => {
+      message.error(err.message || 'เกิดข้อผิดพลาดในการคืนเงิน');
+    },
+    refetchQueries: ['AdminDashboard', 'LottoDraw', 'AdminDraws', 'AdminSlips'],
   });
 
   const { data: categoriesData } = useQuery(GET_LOTTO_CATEGORIES);
@@ -122,6 +144,24 @@ export default function AdminSlipsPage() {
       okButtonProps: { loading: approving },
       onOk: async () => {
         await approveSlip({ variables: { orderId } });
+      },
+    });
+  };
+
+  const handleRefundOrder = (orderId: string, orderNo: string) => {
+    Modal.confirm({
+      title: 'ยืนยันการคืนเงิน',
+      content: `ต้องการคืนเงินให้โพยเลขที่ ${orderNo} ใช่หรือไม่?`,
+      okText: 'ยืนยันคืนเงิน',
+      cancelText: 'ยกเลิก',
+      okButtonProps: { loading: refunding, danger: true },
+      onOk: async () => {
+        await refundOrder({ 
+          variables: { 
+            orderId,
+            reason: 'Admin คืนเงินด้วยตัวเอง (หมดเวลารับโพย)' 
+          } 
+        });
       },
     });
   };
@@ -217,11 +257,14 @@ export default function AdminSlipsPage() {
     {
       title: 'การจัดการ',
       key: 'actions',
-      width: 120,
+      width: 150,
       align: 'center' as const,
       fixed: 'right' as const,
       render: (_: any, record: any) => {
-        if (record.resultStatus === 'pending') {
+        const actionInfo = getSlipAdminAction(record.status, record.resultStatus, record.closeAt);
+
+        // Show approve button
+        if (actionInfo.type === 'APPROVE') {
           return (
             <Button
               type="primary"
@@ -230,11 +273,33 @@ export default function AdminSlipsPage() {
               onClick={() => handleApproveSlip(record.id, record.orderNo)}
               loading={approving}
             >
-              รับโพย
+              {actionInfo.label}
             </Button>
           );
         }
-        return <span style={{ color: '#999' }}>-</span>;
+
+        // Show refund button
+        if (actionInfo.type === 'REFUND') {
+          return (
+            <Button
+              danger
+              icon={<RollbackOutlined />}
+              size="small"
+              onClick={() => handleRefundOrder(record.id, record.orderNo)}
+              loading={refunding}
+            >
+              {actionInfo.label}
+            </Button>
+          );
+        }
+
+        // Show status tag
+        if (actionInfo.type === 'APPROVED' || actionInfo.type === 'REFUNDED' || actionInfo.type === 'REJECTED') {
+          return <Tag color={actionInfo.color}>{actionInfo.label}</Tag>;
+        }
+
+        // Default: show "-"
+        return <span style={{ color: '#999' }}>{actionInfo.label}</span>;
       },
     },
     {
@@ -372,6 +437,8 @@ export default function AdminSlipsPage() {
               >
                 <Select.Option value="pending">รอตรวจ</Select.Option>
                 <Select.Option value="approved">รับโพยแล้ว</Select.Option>
+                <Select.Option value="refunded">คืนเงินแล้ว</Select.Option>
+                <Select.Option value="rejected">ปฏิเสธ</Select.Option>
                 <Select.Option value="won">ถูกรางวัล</Select.Option>
                 <Select.Option value="lost">ไม่ถูกรางวัล</Select.Option>
                 <Select.Option value="cancelled">ยกเลิก</Select.Option>

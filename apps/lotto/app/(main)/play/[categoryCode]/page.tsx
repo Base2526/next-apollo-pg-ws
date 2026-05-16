@@ -18,6 +18,48 @@ dayjs.extend(timezone);
 dayjs.extend(isSameOrAfter);
 dayjs.locale("th");
 
+// Universal date parser - converts any date format to milliseconds
+function parseDateMs(value: any): number | null {
+  if (!value) return null;
+  
+  // If already a number (epoch ms), return it
+  if (typeof value === 'number') return value;
+  
+  // If Date object
+  if (value instanceof Date) return value.getTime();
+  
+  // If string, try parsing
+  if (typeof value === 'string') {
+    // Check if it's an epoch milliseconds string
+    const asNumber = Number(value);
+    if (!isNaN(asNumber) && asNumber > 1000000000000) {
+      return asNumber;
+    }
+    
+    // Try ISO string parsing
+    try {
+      const date = new Date(value);
+      const ms = date.getTime();
+      if (!isNaN(ms)) return ms;
+    } catch (e) {
+      console.error('[parseDateMs] Parse error:', e);
+    }
+  }
+  
+  return null;
+}
+
+// Format milliseconds to Thai time (HH:mm น.)
+function formatTimeTH(ms: number | null): string {
+  if (!ms) return '-';
+  try {
+    return dayjs(ms).tz('Asia/Bangkok').format('HH:mm') + ' น.';
+  } catch (error) {
+    console.error('[formatTimeTH] Error:', error);
+    return '-';
+  }
+}
+
 // Helper function to safely get close time from draw object
 function getDrawCloseTime(draw: any): string | null {
   if (!draw) return null;
@@ -188,6 +230,61 @@ export default function Page({ params }: { params: { categoryCode: string } }) {
     : activeDraw?.is_accepting_bets === true;
   
   const closeTimePassed = closeTimeValue ? isDatePassed(closeTimeValue) : false;
+
+  // COMPREHENSIVE DEBUG LOGGING FOR THAI_GOVERNMENT
+  if (categoryCode === 'THAI_GOVERNMENT') {
+    const now = dayjs().tz('Asia/Bangkok');
+    const openAtParsed = activeDraw?.open_at ? dayjs(activeDraw.open_at).tz('Asia/Bangkok') : null;
+    const closeAtParsed = activeDraw?.close_at ? dayjs(activeDraw.close_at).tz('Asia/Bangkok') : null;
+    
+    console.log("[THAI_ACTIVE_DRAW_DEBUG]", {
+      page: "play/THAI_GOVERNMENT",
+      now: now.toISOString(),
+      selectedDraw: {
+        id: activeDraw?.id,
+        code: activeDraw?.code,
+        drawDate: activeDraw?.draw_date,
+        openAt: activeDraw?.open_at,
+        closeAt: activeDraw?.close_at,
+        status: activeDraw?.status,
+        resultStatus: activeDraw?.result_status,
+        isActive: activeDraw?.is_active,
+        isAcceptingBets: activeDraw?.is_accepting_bets,
+      },
+      parsed: {
+        openMs: openAtParsed?.valueOf(),
+        closeMs: closeAtParsed?.valueOf(),
+        nowMs: now.valueOf(),
+        isOpenTime: openAtParsed ? now.isSameOrAfter(openAtParsed) : false,
+        isBeforeClose: closeAtParsed ? now.isBefore(closeAtParsed) : false,
+        isStatusOpen: ['OPEN', 'PENDING'].includes(activeDraw?.status || ''),
+        isAcceptingBets: activeDraw?.is_accepting_bets === true,
+      },
+      formatted: {
+        now: now.format('YYYY-MM-DD HH:mm:ss'),
+        openAt: openAtParsed?.format('YYYY-MM-DD HH:mm:ss'),
+        closeAt: closeAtParsed?.format('YYYY-MM-DD HH:mm:ss'),
+      }
+    });
+  }
+
+  // COMPREHENSIVE DEBUG LOGGING
+  console.log("[ACTIVE_DRAW_COMPARE_DEBUG]", {
+    page: "play/[categoryCode]",
+    categoryCode,
+    selectedDrawId: activeDraw?.id,
+    code: activeDraw?.code,
+    drawDate: activeDraw?.draw_date,
+    nameTh: activeDraw?.name_th,
+    openAt: activeDraw?.open_at,
+    closeAt: activeDraw?.close_at,
+    status: activeDraw?.status,
+    isActive: activeDraw?.is_active,
+    isAcceptingBets: activeDraw?.is_accepting_bets,
+    now: new Date().toISOString(),
+    drawIsOpen,
+    closeTimePassed,
+  });
 
   console.log("[Lotto] Category:", categoryCode);
   console.log("[Lotto] Loaded bet types:", betTypes);
@@ -730,25 +827,44 @@ export default function Page({ params }: { params: { categoryCode: string } }) {
             <span style={{ color: selectedCategory?.color || '#dc2626', fontSize: 22, fontWeight: 800, marginRight: 8 }}>
               {selectedCategory?.name_th || categoryCode}
             </span>
-            {activeDraw && (
-              <>
-                {/* For YEEKEE_VIP, show round info */}
-                {categoryCode === 'YEEKEE_VIP' && activeDraw.round_no ? (
-                  <>
-                    <span style={{ color: '#374151', fontWeight: 600 }}>{activeDraw.name_th}</span>
-                    <span style={{ fontSize: 14, color: '#6b7280', marginLeft: 8 }}>
-                      • ปิดรับ: {formatCloseTime(activeDraw)}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span style={{ color: '#374151', fontWeight: 600 }}>{activeDraw.name_th || `งวดวันที่ ${formatThaiDate(activeDraw.draw_date)}`}</span>
-                    <span style={{ fontSize: 14, color: '#6b7280', marginLeft: 8 }}>
-                      • ปิดรับ: {formatThaiDateTime(activeDraw.close_at)}
-                    </span>
-                  </>
-                )}
-                <span 
+            {activeDraw && (() => {
+              // Parse close time for display
+              const closeAtRaw = activeDraw.closeAt || activeDraw.close_at;
+              const parsedCloseMs = parseDateMs(closeAtRaw);
+              const formattedCloseTime = formatTimeTH(parsedCloseMs);
+              
+              // Debug logging for THAI_GOVERNMENT
+              if (categoryCode === 'THAI_GOVERNMENT') {
+                console.log('[PLAY_THAI_CLOSE_TIME_DEBUG]', {
+                  categoryCode,
+                  drawId: activeDraw?.id,
+                  code: activeDraw?.code,
+                  closeAtRaw: activeDraw?.closeAt,
+                  close_atRaw: activeDraw?.close_at,
+                  parsedCloseMs,
+                  formattedCloseTime,
+                });
+              }
+              
+              return (
+                <>
+                  {/* For YEEKEE_VIP, show round info */}
+                  {categoryCode === 'YEEKEE_VIP' && activeDraw.round_no ? (
+                    <>
+                      <span style={{ color: '#374151', fontWeight: 600 }}>{activeDraw.name_th}</span>
+                      <span style={{ fontSize: 14, color: '#6b7280', marginLeft: 8 }}>
+                        • ปิดรับ: {formatCloseTime(activeDraw)}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ color: '#374151', fontWeight: 600 }}>{activeDraw.name_th || `งวดวันที่ ${formatThaiDate(activeDraw.draw_date)}`}</span>
+                      <span style={{ fontSize: 14, color: '#6b7280', marginLeft: 8 }}>
+                        • ปิดรับ: {formattedCloseTime}
+                      </span>
+                    </>
+                  )}
+                  <span 
                   style={{ 
                     marginLeft: 8, 
                     padding: '2px 8px', 
@@ -760,9 +876,10 @@ export default function Page({ params }: { params: { categoryCode: string } }) {
                   }}
                 >
                   {drawIsOpen ? 'เปิดรับแทง' : 'ปิดรับแทง'}
-                </span>
-              </>
-            )}
+                  </span>
+                </>
+              );
+            })()}
             {!activeDraw && <span style={{ color: '#9ca3af' }}>-</span>}
           </div>
         </div>
