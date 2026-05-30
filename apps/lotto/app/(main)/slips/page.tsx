@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import Breadcrumb from "../../../components/Breadcrumb";
 import Link from "next/link";
 import { useMySlips } from "../../../graphql/client";
 import { useRouter } from "next/navigation";
+import { Collapse } from "antd";
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "ยังไม่ออกผล",
@@ -21,6 +22,88 @@ const STATUS_COLORS: Record<string, string> = {
   lost: "#6b7280",
   cancelled: "#888",
 };
+
+/**
+ * Check if slip is YEEKEE category
+ */
+function isYeekeeCategory(categoryCode: string): boolean {
+  return categoryCode?.includes('YEEKEE') || categoryCode?.includes('YEE_KEE');
+}
+
+/**
+ * Check if slip is Thai Government
+ */
+function isThaiGovCategory(categoryCode: string): boolean {
+  return categoryCode?.includes('THAI_GOVERNMENT') || categoryCode?.includes('THAI_GOV');
+}
+
+/**
+ * Safely parse any date value (string epoch ms, ISO string, Date, number) to epoch milliseconds
+ * Returns null if invalid
+ */
+function parseDateMs(value: unknown): number | null {
+  if (value == null || value === "") return null;
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    // Check if it's epoch milliseconds as string (all digits)
+    if (/^\d+$/.test(trimmed)) {
+      const n = Number(trimmed);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    // Try parsing as ISO date or other date format
+    const parsed = Date.parse(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  return null;
+}
+
+/**
+ * Convert date value to ISO date key (YYYY-MM-DD) safely
+ */
+function getDateKey(value: unknown): string {
+  const ms = parseDateMs(value);
+  if (!ms) return "unknown-date";
+  try {
+    return new Date(ms).toISOString().slice(0, 10);
+  } catch {
+    return "unknown-date";
+  }
+}
+
+/**
+ * Format date for Thai display (DD/MM/YYYY Buddhist year)
+ */
+function formatThaiDateShort(dateValue: unknown): string {
+  const ms = parseDateMs(dateValue);
+  if (!ms) return "ไม่ระบุวันที่";
+  
+  try {
+    const date = new Date(ms);
+    if (isNaN(date.getTime())) return "ไม่ระบุวันที่";
+    
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear() + 543; // Buddhist year
+    
+    return `${day}/${month}/${year}`;
+  } catch {
+    return "ไม่ระบุวันที่";
+  }
+}
 
 function formatThaiDate(dateString: string | null) {
   if (!dateString) return "-";
@@ -69,32 +152,194 @@ function formatTime(dateString: string | null) {
   }
 }
 
-function groupSlipsByDate(slips: any[]) {
-  const groups: Record<string, { dateLabel: string; slips: any[]; dateValue: Date }> = {};
+/**
+ * Get category icon based on category code
+ */
+function getCategoryIcon(categoryCode: string): string {
+  if (isThaiGovCategory(categoryCode)) return '🇹🇭';
+  if (isYeekeeCategory(categoryCode)) return '🎯';
+  return '🎲';
+}
+
+/**
+ * Build formatted group header title with category, date/draw, and count
+ */
+function buildGroupHeaderTitle(categoryNameTh: string, dateOrDrawInfo: string, totalSlips: number, categoryCode: string): string {
+  const icon = getCategoryIcon(categoryCode);
+  return `${icon} ${categoryNameTh} • ${dateOrDrawInfo} • ${totalSlips} โพย`;
+}
+
+/**
+ * Group slips by display section based on category
+ * - YEEKEE: Group by date
+ * - THAI_GOVERNMENT: Group by draw
+ */
+function groupSlipsByDisplaySection(slips: any[]) {
+  const groups: Record<string, {
+    key: string;
+    title: string;
+    categoryCode: string;
+    categoryNameTh: string;
+    dateOrDrawInfo: string;
+    totalSlips: number;
+    slips: any[];
+    sortValue: number;
+  }> = {};
   
   slips.forEach((slip) => {
-    const dateKey = slip.createdAt ? new Date(slip.createdAt).toDateString() : 'unknown';
-    if (!groups[dateKey]) {
-      groups[dateKey] = {
-        dateLabel: formatDateHeader(slip.createdAt),
+    const categoryCode = slip.categoryCode || '';
+    const categoryNameTh = slip.categoryNameTh || 'หวย';
+    let groupKey: string;
+    let dateOrDrawInfo: string;
+    let sortValue: number;
+    
+    if (isYeekeeCategory(categoryCode)) {
+      // YEEKEE: Group by date
+      const dateStr = slip.drawDate || slip.createdAt;
+      const drawMs = parseDateMs(dateStr);
+      const dateKey = getDateKey(dateStr);
+      
+      groupKey = `group-yeekee-${categoryCode}-${dateKey}`;
+      dateOrDrawInfo = formatThaiDateShort(dateStr);
+      sortValue = drawMs ?? 0;
+      
+      // Debug log for date parsing
+      if (dateKey === "unknown-date") {
+        console.warn("[SLIPS_DATE_PARSE_DEBUG]", {
+          category: "YEEKEE",
+          orderNo: slip.orderNo || slip.id?.substring(0, 8),
+          rawDrawDate: slip.drawDate,
+          rawCreatedAt: slip.createdAt,
+          parsedDrawMs: drawMs,
+          dateKey
+        });
+      }
+    } else if (isThaiGovCategory(categoryCode)) {
+      // THAI_GOVERNMENT: Group by draw
+      const drawName = slip.drawNameTh || formatThaiDateShort(slip.drawDate);
+      const drawMs = parseDateMs(slip.drawDate);
+      const dateKey = getDateKey(slip.drawDate);
+      
+      groupKey = `group-thaigov-${categoryCode}-${dateKey}`;
+      dateOrDrawInfo = drawName.includes('งวด') ? drawName : `งวดวันที่ ${drawName}`;
+      sortValue = drawMs ?? 0;
+      
+      // Debug log for date parsing
+      if (dateKey === "unknown-date") {
+        console.warn("[SLIPS_DATE_PARSE_DEBUG]", {
+          category: "THAI_GOVERNMENT",
+          orderNo: slip.orderNo || slip.id?.substring(0, 8),
+          rawDrawDate: slip.drawDate,
+          drawNameTh: slip.drawNameTh,
+          parsedDrawMs: drawMs,
+          dateKey
+        });
+      }
+    } else {
+      // Other categories: Group by date
+      const dateStr = slip.createdAt || slip.drawDate;
+      const drawMs = parseDateMs(dateStr);
+      const dateKey = getDateKey(dateStr);
+      
+      groupKey = `group-other-${categoryCode}-${dateKey}`;
+      dateOrDrawInfo = formatThaiDateShort(dateStr);
+      sortValue = drawMs ?? 0;
+      
+      // Debug log for date parsing
+      if (dateKey === "unknown-date") {
+        console.warn("[SLIPS_DATE_PARSE_DEBUG]", {
+          category: "OTHER",
+          categoryCode,
+          orderNo: slip.orderNo || slip.id?.substring(0, 8),
+          rawDrawDate: slip.drawDate,
+          rawCreatedAt: slip.createdAt,
+          parsedDrawMs: drawMs,
+          dateKey
+        });
+      }
+    }
+    
+    if (!groups[groupKey]) {
+      groups[groupKey] = {
+        key: groupKey,
+        title: '', // Will be built later with actual slip count
+        categoryCode,
+        categoryNameTh,
+        dateOrDrawInfo,
+        totalSlips: 0,
         slips: [],
-        dateValue: slip.createdAt ? new Date(slip.createdAt) : new Date(0)
+        sortValue
       };
     }
-    groups[dateKey].slips.push(slip);
+    
+    groups[groupKey].slips.push(slip);
+    groups[groupKey].totalSlips++;
   });
   
   // Sort groups by date (newest first)
-  return Object.values(groups).sort((a, b) => b.dateValue.getTime() - a.dateValue.getTime());
+  const sortedGroups = Object.values(groups).sort((a, b) => b.sortValue - a.sortValue);
+  
+  // Build final titles with slip counts and sort slips inside each group
+  sortedGroups.forEach(group => {
+    // Build title with category name, date/draw info, and total count
+    group.title = buildGroupHeaderTitle(group.categoryNameTh, group.dateOrDrawInfo, group.totalSlips, group.categoryCode);
+    
+    // Sort slips inside each group by createdAt (newest first)
+    group.slips.sort((a, b) => {
+      const timeA = parseDateMs(a.createdAt) ?? 0;
+      const timeB = parseDateMs(b.createdAt) ?? 0;
+      return timeB - timeA;
+    });
+  });
+  
+  return sortedGroups;
 }
 
 export default function LottoSlipsPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [activeKeys, setActiveKeys] = useState<string[]>([]);
+  const isCollapseInitialized = useRef(false);
   const { data, loading, error } = useMySlips();
   const router = useRouter();
 
   const slips = data?.mySlips || [];
-  const groupedSlips = groupSlipsByDate(slips);
+  
+  // Use useMemo for grouping to avoid recalculation on every render
+  const groupedSlips = useMemo(() => {
+    const groups = groupSlipsByDisplaySection(slips);
+    
+    // Debug log with keys
+    const groupKeys = groups.map(g => g.key);
+    const duplicates = groupKeys.filter((key, index) => groupKeys.indexOf(key) !== index);
+    
+    console.log("[SLIP_GROUPING_DEBUG]", {
+      total: slips.length,
+      groups: groups.map(g => ({
+        key: g.key,
+        title: g.title,
+        category: g.categoryCode,
+        totalSlips: g.totalSlips
+      }))
+    });
+    
+    if (duplicates.length > 0) {
+      console.error("[SLIPS_COLLAPSE_KEYS_DEBUG] Duplicate keys found:", duplicates);
+    }
+    
+    return groups;
+  }, [slips]);
+  
+  // Set first group as active by default - ONLY ONCE on initial load
+  useEffect(() => {
+    if (groupedSlips.length > 0 && !isCollapseInitialized.current) {
+      setActiveKeys([groupedSlips[0].key]);
+      isCollapseInitialized.current = true;
+      console.log("[SLIPS_COLLAPSE_INIT]", {
+        firstKey: groupedSlips[0].key,
+        firstTitle: groupedSlips[0].title
+      });
+    }
+  }, [groupedSlips]);
 
   return (
     <div style={{ background: '#f4f5f7', minHeight: '100vh' }}>
@@ -244,30 +489,56 @@ export default function LottoSlipsPage() {
         {/* Success State - Slips List */}
         {!loading && !error && slips.length > 0 && (
           <div style={{ maxWidth: 980, margin: '0 auto' }}>
-            {groupedSlips.map((group) => (
-              <section key={group.dateLabel} style={{ marginBottom: 36 }}>
-                {/* Date Header */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 14,
-                  paddingBottom: 10,
-                  borderBottom: '2px solid #e5e7eb'
-                }}>
-                  <h2 style={{ fontSize: 19, fontWeight: 800, color: '#111', margin: 0, letterSpacing: '0.5px' }}>
-                    {group.dateLabel}
-                  </h2>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: '#6b7280' }}>
-                    {group.slips.length} โพย
-                  </span>
-                </div>
-                
-                {/* Slips in this date */}
-                <div style={{ display: 'grid', gap: 10 }}>
-                  {group.slips.map((slip: any, index: number) => (
+            <Collapse
+              activeKey={activeKeys}
+              onChange={(keys) => {
+                const newKeys = Array.isArray(keys) ? keys : [keys];
+                console.log("[SLIPS_COLLAPSE_CHANGE]", { from: activeKeys, to: newKeys });
+                setActiveKeys(newKeys);
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none'
+              }}
+            >
+              {groupedSlips.map((group) => (
+                <Collapse.Panel
+                  key={group.key}
+                  header={
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      width: '100%',
+                      paddingRight: 12,
+                      flexWrap: 'wrap'
+                    }}>
+                      <div style={{ 
+                        fontSize: 16, 
+                        fontWeight: 700, 
+                        color: '#111',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        flexWrap: 'wrap',
+                        lineHeight: 1.4
+                      }}>
+                        {group.title}
+                      </div>
+                    </div>
+                  }
+                  style={{
+                    marginBottom: 16,
+                    background: '#fff',
+                    borderRadius: 12,
+                    border: '1px solid #e5e7eb',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <div style={{ display: 'grid', gap: 10, paddingTop: 4 }}>
+                    {group.slips.map((slip: any, index: number) => (
                     <div
-                      key={slip.id}
+                      key={`slip-card-${slip.id}`}
                       style={{
                         background: '#fff',
                         borderRadius: 10,
@@ -444,9 +715,10 @@ export default function LottoSlipsPage() {
                       )}
                     </div>
                   ))}
-                </div>
-              </section>
-            ))}
+                  </div>
+                </Collapse.Panel>
+              ))}
+            </Collapse>
           </div>
         )}
       </div>

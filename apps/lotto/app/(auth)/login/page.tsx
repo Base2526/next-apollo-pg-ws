@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, gql } from "@apollo/client";
 
 const LOGIN_MUTATION = gql`
@@ -25,6 +25,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [login] = useMutation(LOGIN_MUTATION);
 
   const validate = () => {
@@ -45,7 +46,14 @@ export default function LoginPage() {
         document.cookie = `auth_token=${data.login.token}; path=/;`;
         localStorage.setItem("auth_token", data.login.token);
         localStorage.setItem("auth_user", JSON.stringify(data.login.user));
-        router.replace("/");
+        
+        // Redirect to return URL or homepage
+        const redirect = searchParams?.get('redirect');
+        if (redirect && !redirect.includes('/login') && !redirect.includes('/admin')) {
+          router.replace(redirect);
+        } else {
+          router.replace("/");
+        }
       } else {
         setError(data?.login?.message || "เข้าสู่ระบบไม่สำเร็จ");
       }

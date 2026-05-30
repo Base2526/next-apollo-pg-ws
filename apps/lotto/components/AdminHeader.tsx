@@ -9,6 +9,16 @@ export default function AdminHeader() {
 	const router = useRouter();
 	const pathname = usePathname();
 
+	// Check if current page is admin auth page (login/forgot-password)
+	const isAdminAuthPage = 
+		pathname === "/admin/login" || 
+		pathname === "/admin/forgot-password";
+
+	// Don't render header at all on auth pages
+	if (isAdminAuthPage) {
+		return null;
+	}
+
 	const handleLogout = () => {
 		Modal.confirm({
 			title: "ยืนยันออกจากระบบ",
@@ -72,85 +82,85 @@ export default function AdminHeader() {
 
 				{/* Navigation Menu */}
 				<nav style={{
-					display: 'flex',
-					alignItems: 'center',
-					gap: '8px',
-					flex: 1,
-					justifyContent: 'center',
-					overflowX: 'auto',
-					msOverflowStyle: 'none',
-					scrollbarWidth: 'none',
-					padding: '0 20px'
-				}}>
-					{menuItems.map((item) => {
-						const active = isActive(item.path);
-						return (
-							<Link
-								key={item.path}
-								href={item.path}
-								style={{
-									padding: '6px 12px',
-									fontSize: '14px',
-									fontWeight: active ? 500 : 400,
-									color: active ? '#1677ff' : '#595959',
-									background: active ? '#e6f4ff' : 'transparent',
-									borderRadius: '6px',
-									textDecoration: 'none',
-									whiteSpace: 'nowrap',
-									transition: 'all 0.2s ease',
-									cursor: 'pointer',
-									display: 'inline-block'
-								}}
-								onMouseEnter={(e) => {
-									if (!active) {
-										e.currentTarget.style.background = '#f5f5f5';
-										e.currentTarget.style.color = '#262626';
-									}
-								}}
-								onMouseLeave={(e) => {
-									if (!active) {
-										e.currentTarget.style.background = 'transparent';
-										e.currentTarget.style.color = '#595959';
-									}
-								}}
-							>
-								{item.label}
-							</Link>
-						);
-					})}
-				</nav>
+						display: 'flex',
+						alignItems: 'center',
+						gap: '8px',
+						flex: 1,
+						justifyContent: 'center',
+						overflowX: 'auto',
+						msOverflowStyle: 'none',
+						scrollbarWidth: 'none',
+						padding: '0 20px'
+					}}>
+						{menuItems.map((item) => {
+							const active = isActive(item.path);
+							return (
+								<Link
+									key={item.path}
+									href={item.path}
+									style={{
+										padding: '6px 12px',
+										fontSize: '14px',
+										fontWeight: active ? 500 : 400,
+										color: active ? '#1677ff' : '#595959',
+										background: active ? '#e6f4ff' : 'transparent',
+										borderRadius: '6px',
+										textDecoration: 'none',
+										whiteSpace: 'nowrap',
+										transition: 'all 0.2s ease',
+										cursor: 'pointer',
+										display: 'inline-block'
+									}}
+									onMouseEnter={(e) => {
+										if (!active) {
+											e.currentTarget.style.background = '#f5f5f5';
+											e.currentTarget.style.color = '#262626';
+										}
+									}}
+									onMouseLeave={(e) => {
+										if (!active) {
+											e.currentTarget.style.background = 'transparent';
+											e.currentTarget.style.color = '#595959';
+										}
+									}}
+								>
+									{item.label}
+								</Link>
+							);
+						})}
+					</nav>
 
 				{/* Logout Button */}
 				<button
-					onClick={handleLogout}
-					style={{
-						display: 'flex',
-						alignItems: 'center',
-						gap: '6px',
-						padding: '6px 12px',
-						fontSize: '13px',
-						fontWeight: 500,
-						color: '#ff4d4f',
-						background: '#fff',
-						border: '1px solid #ff4d4f',
-						borderRadius: '6px',
-						cursor: 'pointer',
-						transition: 'all 0.2s ease',
-						minWidth: '90px',
-						justifyContent: 'center'
-					}}
-					onMouseEnter={(e) => {
-						e.currentTarget.style.background = '#fff1f0';
-						e.currentTarget.style.borderColor = '#ff7875';
-					}}
-					onMouseLeave={(e) => {
-						e.currentTarget.style.background = '#fff';
-						e.currentTarget.style.borderColor = '#ff4d4f';
-					}}
-				>
-					<LogoutOutlined style={{ fontSize: '13px' }} />
-					<span>Logout</span>
-				</button>
+						onClick={handleLogout}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: '6px',
+							padding: '6px 12px',
+							fontSize: '13px',
+							fontWeight: 500,
+							color: '#ff4d4f',
+							background: '#fff',
+							border: '1px solid #ff4d4f',
+							borderRadius: '6px',
+							cursor: 'pointer',
+							transition: 'all 0.2s ease',
+							minWidth: '90px',
+							justifyContent: 'center'
+						}}
+						onMouseEnter={(e) => {
+							e.currentTarget.style.background = '#fff1f0';
+							e.currentTarget.style.borderColor = '#ff7875';
+						}}
+						onMouseLeave={(e) => {
+							e.currentTarget.style.background = '#fff';
+							e.currentTarget.style.borderColor = '#ff4d4f';
+						}}
+					>
+						<LogoutOutlined style={{ fontSize: '13px' }} />
+						<span>Logout</span>
+					</button>
 			</div>
 
 			{/* Hide scrollbar on menu */}

@@ -5,6 +5,7 @@ import "./globals.css";
 import { apolloClient } from "../lib/apollo";
 import LottoHeader from "../components/Header";
 import LottoFooter from "../components/Footer";
+import AuthGuard from "../components/AuthGuard";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -14,11 +15,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <ApolloProvider client={apolloClient}>
-          {!isAdminRoute && <LottoHeader />}
-          <main className="main-container">
-            {children}
-          </main>
-          {!isAdminRoute && <LottoFooter />}
+          <AuthGuard>
+            {!isAdminRoute && <LottoHeader />}
+            <main className="main-container">
+              {children}
+            </main>
+            {!isAdminRoute && <LottoFooter />}
+          </AuthGuard>
         </ApolloProvider>
       </body>
     </html>

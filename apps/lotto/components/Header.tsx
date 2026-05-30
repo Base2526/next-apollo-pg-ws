@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Dropdown, Avatar, Space } from "antd";
 import { UserOutlined, SettingOutlined, LogoutOutlined } from "@ant-design/icons";
 import { Modal } from "antd";
+import { logout } from "../lib/logout";
 
 export default function LottoHeader() {
   const pathname = usePathname();
@@ -25,9 +26,7 @@ export default function LottoHeader() {
         okButtonProps: { danger: true },
         icon: <LogoutOutlined style={{ color: '#dc2626' }} />,
         onOk: () => {
-          localStorage.removeItem("token");
-          localStorage.removeItem("lotto_admin_token");
-          router.push("/login");
+          logout();
         },
       });
     }

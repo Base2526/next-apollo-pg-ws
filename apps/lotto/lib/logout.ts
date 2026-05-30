@@ -1,8 +1,12 @@
+import { clearAuth, getLoginPath } from './auth-utils';
+
 export function logout() {
-  // Remove token from cookie
-  document.cookie = "auth_token=; Max-Age=0; path=/;";
-  // Remove from localStorage
-  localStorage.removeItem("auth_token");
-  localStorage.removeItem("auth_user");
-  window.location.href = "/login";
+  const currentPath = typeof window !== 'undefined' ? window.location.pathname : '/';
+  
+  // Clear all auth data
+  clearAuth();
+  
+  // Redirect to correct login page
+  const loginPath = getLoginPath(currentPath);
+  window.location.href = loginPath;
 }
