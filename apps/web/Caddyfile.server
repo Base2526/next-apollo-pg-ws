@@ -39,6 +39,32 @@ www.jachoei.com {
    redir https://jachoei.com{uri} 308
 }
 
+# project B (bms, AI-BMS) — โปรเจกต์แยก คนละ DB, container เข้าร่วม network bms_shared
+# ผ่าน alias web_b/ws_b (ดู docker-compose.prod.yml ของ next-apollo-pg-ws และ bms)
+bms.jachoei.com {
+   tls somkid@voovadigital.com
+
+   encode zstd gzip
+
+   @nextStatic path /_next/static/*
+   header @nextStatic Cache-Control "public, max-age=31536000, immutable"
+
+   @publicStatic path /favicon.ico /robots.txt /sitemap.xml /images/* /static/*
+   header @publicStatic Cache-Control "public, max-age=86400"
+
+   @ws {
+     path /graphql
+     header Connection *Upgrade*
+     header Upgrade websocket
+   }
+   reverse_proxy @ws ws_b:8080
+
+   @gql_http path /graphql*
+   reverse_proxy @gql_http web_b:3000
+
+   reverse_proxy web_b:3000
+}
+
 
 #localhost
 #whosscam.com {
