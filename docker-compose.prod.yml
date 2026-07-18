@@ -115,6 +115,9 @@ services:
       - ./apps/web/certs:/certs:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - default
+      - bms_shared
 
   social-worker:
     image: myapp-web:latest
@@ -143,3 +146,7 @@ services:
       - postgres
       - redis
     restart: unless-stopped
+
+networks:
+  bms_shared:
+    name: bms_shared
